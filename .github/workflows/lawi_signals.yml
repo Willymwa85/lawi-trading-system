@@ -1,0 +1,23 @@
+name: LAWI Trading Signals
+
+on:
+  schedule:
+    - cron: '0 8 * * 1-5'
+    - cron: '0 12 * * 1-5'
+    - cron: '0 19 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  send_signal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - run: python train.py
+      - run: python predict_now.py --telegram
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
