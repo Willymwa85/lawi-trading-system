@@ -21,6 +21,28 @@ from lawi.features import build_features
 from lawi.db import init_db, get_recent_predictions, get_accuracy_stats
 from lawi.alerts import test_connection
 
+# ─── Admin Auth ───────────────────────────────────────────────────────────────
+def is_admin() -> bool:
+    return st.session_state.get("is_admin", False)
+
+def show_admin_login():
+    """Show a compact admin login in the sidebar."""
+    if is_admin():
+        st.sidebar.success("🔓 Admin mode")
+        if st.sidebar.button("🔒 Lock", key="lock_btn", use_container_width=True):
+            st.session_state.is_admin = False
+            st.rerun()
+    else:
+        with st.sidebar.expander("🔐 Admin Login", expanded=False):
+            pwd = st.sidebar.text_input("Password", type="password", key="admin_pwd")
+            if st.sidebar.button("Unlock", key="unlock_btn", use_container_width=True):
+                correct = st.secrets.get("DASHBOARD_PASSWORD", "lawi2024")
+                if pwd == correct:
+                    st.session_state.is_admin = True
+                    st.rerun()
+                else:
+                    st.sidebar.error("Wrong password")
+
 # ─── Page Config ─────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="LAWI Trading System",
@@ -55,6 +77,9 @@ st.markdown("""
 # ─── Initialise DB ────────────────────────────────────────────────────────────
 init_db()
 
+# ─── Admin login (always shown in sidebar) ────────────────────────────────────
+show_admin_login()
+
 # ─── Header ──────────────────────────────────────────────────────────────────
 st.markdown("""
 <div class="main-header">
@@ -80,13 +105,14 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
 
-    if st.button("📨 Test Telegram", use_container_width=True):
-        with st.spinner("Sending test message …"):
-            ok = test_connection()
-        if ok:
-            st.success("✅ Telegram connected!")
-        else:
-            st.error("❌ Telegram failed. Check .env")
+    if is_admin():
+        if st.button("📨 Test Telegram", use_container_width=True):
+            with st.spinner("Sending test message …"):
+                ok = test_connection()
+            if ok:
+                st.success("✅ Telegram connected!")
+            else:
+                st.error("❌ Telegram failed. Check .env")
 
     st.markdown("---")
     st.markdown("### 📐 ICT Kill Zones (EST)")
@@ -103,7 +129,7 @@ with st.sidebar:
 
 
 # ─── Load Predictions ─────────────────────────────────────────────────────────
-@st.cache_data(ttl=600)   # Cache for 10 minutes
+@st.cache_data(ttl=600)
 def load_all_predictions():
     results = {}
     for symbol, ticker in SYMBOLS.items():
@@ -122,7 +148,11 @@ def load_price_chart(symbol: str):
 
 
 # ─── TABS ────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4 = st.tabs(["📊 Live Signals", "📈 Charts", "📋 History", "🎯 Accuracy"])
+if is_admin():
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Live Signals", "📈 Charts", "📋 History", "🎯 Accuracy"])
+else:
+    tab1, tab2, tab3 = st.tabs(["📊 Live Signals", "📈 Charts", "📋 History"])
+    tab4 = None
 
 # ──────────────────────────────────────────────────────────────────────────────
 # TAB 1 — Live Signals
@@ -133,7 +163,6 @@ with tab1:
     with st.spinner("Loading predictions …"):
         preds = load_all_predictions()
 
-    # Summary row
     cols = st.columns(4)
     for i, (symbol, pred) in enumerate(preds.items()):
         with cols[i]:
@@ -160,7 +189,6 @@ with tab1:
 
     st.markdown("---")
 
-    # Detailed view for selected symbol
     st.subheader(f"🔍 Detail — {SYMBOL_NAMES.get(selected_symbol, selected_symbol)}")
     pred = preds.get(selected_symbol, {})
 
@@ -177,14 +205,12 @@ with tab1:
                 else:
                     st.error(result["error"])
     else:
-        # Metric row
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Bias",        pred.get("label","?"))
         c2.metric("Confidence",  pred.get("confidence_pct","?"))
         c3.metric("Confluence",  f"{pred.get('confluence',0)}/8")
         c4.metric("Signal",      "✅ SEND" if pred.get("above_threshold") else "⏸️ WAIT")
 
-        # ICT Signal breakdown
         st.markdown("#### 📐 ICT 2022 Component Analysis")
         ict = pred.get("ict_signals", {})
         ict_cols = st.columns(2)
@@ -192,12 +218,9 @@ with tab1:
         for j, (component, value) in enumerate(items):
             ict_cols[j % 2].markdown(f"**{component}:** {value}")
 
-        # Probability gauge
         st.markdown("#### 📊 Bias Probabilities")
         proba = pred.get("probabilities", {})
-        prob_df = pd.DataFrame(
-            list(proba.items()), columns=["Bias", "Probability"]
-        )
+        prob_df = pd.DataFrame(list(proba.items()), columns=["Bias", "Probability"])
         prob_df["Probability_pct"] = prob_df["Probability"] * 100
         fig_bar = px.bar(
             prob_df, x="Bias", y="Probability_pct",
@@ -208,8 +231,7 @@ with tab1:
         )
         fig_bar.update_layout(
             plot_bgcolor="#1e1e2e", paper_bgcolor="#1e1e2e",
-            font_color="white", showlegend=False,
-            height=300,
+            font_color="white", showlegend=False, height=300,
         )
         st.plotly_chart(fig_bar, use_container_width=True)
 
@@ -227,27 +249,20 @@ with tab2:
         st.warning("No chart data available.")
     else:
         fig = go.Figure()
-
-        # Candlestick
         fig.add_trace(go.Candlestick(
             x=df_chart.index,
-            open=df_chart["Open"],
-            high=df_chart["High"],
-            low=df_chart["Low"],
-            close=df_chart["Close"],
+            open=df_chart["Open"], high=df_chart["High"],
+            low=df_chart["Low"],  close=df_chart["Close"],
             name="Price",
             increasing_line_color="#00ff88",
             decreasing_line_color="#ff4757",
         ))
-
-        # EMA overlays
         for period, color in [(21,"#3498db"),(50,"#e67e22"),(200,"#9b59b6")]:
             ema = df_chart["Close"].ewm(span=period).mean()
             fig.add_trace(go.Scatter(
                 x=df_chart.index, y=ema, name=f"EMA{period}",
                 line=dict(color=color, width=1), opacity=0.8
             ))
-
         fig.update_layout(
             title=f"{SYMBOL_NAMES.get(selected_symbol,'?')} — Daily Chart (60 days)",
             plot_bgcolor="#1e1e2e", paper_bgcolor="#1e1e2e",
@@ -256,7 +271,6 @@ with tab2:
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # Volume bar
         fig_vol = go.Figure(go.Bar(
             x=df_chart.index, y=df_chart["Volume"],
             marker_color="#3498db", name="Volume", opacity=0.7
@@ -280,25 +294,21 @@ with tab3:
         df_hist = pd.DataFrame(history)
         df_hist["created_at"] = pd.to_datetime(df_hist["created_at"])
         df_hist["confidence"] = (df_hist["confidence"] * 100).round(1).astype(str) + "%"
-
         st.dataframe(
             df_hist[["created_at","symbol","label","confidence","confluence","sent_telegram"]]
             .rename(columns={
-                "created_at":     "Time (UTC)",
-                "symbol":         "Asset",
-                "label":          "Bias",
-                "confidence":     "Confidence",
-                "confluence":     "Confluence",
-                "sent_telegram":  "Sent to Telegram",
+                "created_at":    "Time (UTC)",
+                "symbol":        "Asset",
+                "label":         "Bias",
+                "confidence":    "Confidence",
+                "confluence":    "Confluence",
+                "sent_telegram": "Sent to Telegram",
             }),
             use_container_width=True,
         )
-
-        # Bias distribution pie
         label_counts = pd.DataFrame(history)["label"].value_counts()
         fig_pie = px.pie(
-            values=label_counts.values,
-            names=label_counts.index,
+            values=label_counts.values, names=label_counts.index,
             color=label_counts.index,
             color_discrete_map={"BULLISH":"#00ff88","BEARISH":"#ff4757","CONSOLIDATION":"#ffa502"},
             title="Historical Bias Distribution",
@@ -308,45 +318,46 @@ with tab3:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# TAB 4 — Accuracy
+# TAB 4 — Accuracy (Admin only)
 # ──────────────────────────────────────────────────────────────────────────────
-with tab4:
-    st.subheader("🎯 Model Accuracy Tracker")
-    st.info("📌 Accuracy is calculated when you log the actual market outcome after each trading session.")
+if tab4 is not None:
+    with tab4:
+        st.subheader("🎯 Model Accuracy Tracker")
+        st.info("📌 Accuracy is calculated when you log the actual market outcome after each trading session.")
 
-    acc_cols = st.columns(4)
-    for i, symbol in enumerate(SYMBOLS.keys()):
-        stats = get_accuracy_stats(symbol)
-        with acc_cols[i]:
-            name = SYMBOL_NAMES.get(symbol, symbol)
-            total = stats["total"]
-            acc   = stats["accuracy_pct"]
-            color = "#00ff88" if acc >= 60 else "#ffa502" if acc >= 50 else "#ff4757"
-            st.markdown(f"""
-            <div class="metric-card">
-                <h5>{name}</h5>
-                <h2 style="color:{color};">{acc:.1f}%</h2>
-                <p style="color:#888;">{total} trades logged</p>
-            </div>
-            """, unsafe_allow_html=True)
+        acc_cols = st.columns(4)
+        for i, symbol in enumerate(SYMBOLS.keys()):
+            stats = get_accuracy_stats(symbol)
+            with acc_cols[i]:
+                name  = SYMBOL_NAMES.get(symbol, symbol)
+                total = stats["total"]
+                acc   = stats["accuracy_pct"]
+                color = "#00ff88" if acc >= 60 else "#ffa502" if acc >= 50 else "#ff4757"
+                st.markdown(f"""
+                <div class="metric-card">
+                    <h5>{name}</h5>
+                    <h2 style="color:{color};">{acc:.1f}%</h2>
+                    <p style="color:#888;">{total} trades logged</p>
+                </div>
+                """, unsafe_allow_html=True)
 
-    st.markdown("---")
-    st.markdown("#### 📝 Log Trade Outcome")
-    log_sym  = st.selectbox("Asset", list(SYMBOLS.keys()), key="log_sym",
-                             format_func=lambda s: SYMBOL_NAMES.get(s, s))
-    log_pred = st.selectbox("Your prediction was", ["BULLISH","BEARISH","CONSOLIDATION"])
-    log_act  = st.selectbox("Actual market moved", ["BULLISH","BEARISH","CONSOLIDATION"])
-    log_note = st.text_input("Notes (optional)")
+        st.markdown("---")
+        st.markdown("#### 📝 Log Trade Outcome")
+        log_sym  = st.selectbox("Asset", list(SYMBOLS.keys()), key="log_sym",
+                                 format_func=lambda s: SYMBOL_NAMES.get(s, s))
+        log_pred = st.selectbox("Your prediction was", ["BULLISH","BEARISH","CONSOLIDATION"])
+        log_act  = st.selectbox("Actual market moved", ["BULLISH","BEARISH","CONSOLIDATION"])
+        log_note = st.text_input("Notes (optional)")
 
-    if st.button("✅ Save Outcome"):
-        from lawi.db import get_conn
-        from datetime import datetime as dt
-        correct = 1 if log_pred == log_act else 0
-        with get_conn() as conn:
-            conn.execute(
-                """INSERT INTO accuracy_log (logged_at, symbol, prediction, actual, correct, notes)
-                   VALUES (?,?,?,?,?,?)""",
-                (dt.utcnow().isoformat(), log_sym, log_pred, log_act, correct, log_note)
-            )
-        st.success("✅ Outcome saved!" if correct else "📊 Outcome saved (incorrect prediction logged).")
-        st.rerun()
+        if st.button("✅ Save Outcome"):
+            from lawi.db import get_conn
+            from datetime import datetime as dt
+            correct = 1 if log_pred == log_act else 0
+            with get_conn() as conn:
+                conn.execute(
+                    """INSERT INTO accuracy_log (logged_at, symbol, prediction, actual, correct, notes)
+                       VALUES (?,?,?,?,?,?)""",
+                    (dt.utcnow().isoformat(), log_sym, log_pred, log_act, correct, log_note)
+                )
+            st.success("✅ Outcome saved!" if correct else "📊 Outcome saved (incorrect prediction logged).")
+            st.rerun()
