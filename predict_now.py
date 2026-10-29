@@ -9,6 +9,8 @@ Usage:
 
 import argparse
 import logging
+from datetime import datetime
+import pytz
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 from lawi.config import SYMBOLS, SYMBOL_NAMES, BIAS_LABELS
@@ -79,7 +81,13 @@ def main():
 
         if args.telegram:
             print("\n  Sending daily brief to Telegram …")
-            send_daily_brief(preds)
+        toronto = pytz.timezone("America/Toronto")
+        current_hour = datetime.now(toronto).hour
+        is_morning_run = current_hour < 6  # 4AM run
+        send_daily_brief(preds, include_news=is_morning_run)
+        if is_morning_run:
+            print("  ✅ Daily brief + Forex Factory news sent!")
+        else:
             print("  ✅ Daily brief sent!")
 
     print("\n" + "="*60 + "\n")

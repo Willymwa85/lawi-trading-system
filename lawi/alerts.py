@@ -110,11 +110,14 @@ def send_signal(symbol: str, prediction: dict) -> bool:
     return _send_message(text)
 
 
-def send_daily_brief(predictions: dict):
+def send_daily_brief(predictions: dict, include_news: bool = False):
     """
     Send a consolidated daily morning brief for all 4 assets.
     predictions = {symbol: prediction_dict}
+    include_news = True at 4AM run to include Forex Factory news warning
     """
+    from .news_calendar import fetch_news_today, format_news_warning
+
     ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     lines = []
     for symbol, pred in predictions.items():
@@ -132,13 +135,23 @@ def send_daily_brief(predictions: dict):
 
     summary = "\n\n".join(lines)
 
+    # Fetch news warning for 4AM brief
+    news_block = ""
+    if include_news:
+        events = fetch_news_today()
+        if events:
+            news_block = "\n\n" + format_news_warning(events)
+        else:
+            news_block = "\n\n✅ <b>No high-impact news today.</b> <i>Clean trading day!</i>"
+
     header = f"""
 🌅 <b>LAWI Morning Brief — {ts}</b>
 ━━━━━━━━━━━━━━━━━━━━━
 
 {summary}
 
-━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━{news_block}
+
 📌 <i>Trade in the direction of the bias.
 Wait for your ICT model entry during Kill Zones.</i>
 🏢 <i>LAWI Trading System — ICT 2022 Model</i>
