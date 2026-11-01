@@ -31,8 +31,7 @@ SYMBOL_NAMES = {
 
 # ─── Data Settings ───────────────────────────────────────────────────────────
 LOOKBACK_DAYS   = 60    # days of history to fetch for feature engineering
-TRAIN_DAYS      = 9000  # ~26 years from 2000 for richer training
-
+TRAIN_DAYS      = 2500  # ~7 years — rich data without CPU throttling
 # Timeframes to fetch (pandas/yfinance interval strings)
 INTERVAL_1H  = "1h"
 INTERVAL_4H  = "60m"   # yfinance uses '60m' for 4h we resample from 1h
