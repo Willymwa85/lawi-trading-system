@@ -81,13 +81,24 @@ init_db()
 show_admin_login()
 
 # ─── Header ──────────────────────────────────────────────────────────────────
-st.markdown("""
+import pytz
+_toronto = pytz.timezone("America/Toronto")
+_now_tor  = datetime.now(_toronto)
+_day_name = _now_tor.strftime("%A")
+_date_str = _now_tor.strftime("%B %d, %Y")
+_is_weekend = _now_tor.weekday() >= 5
+
+st.markdown(f"""
 <div class="main-header">
     <h1>🏦 LAWI Trading System</h1>
     <p>ICT 2022 Mentorship Model · Smart Money Concepts · AI-Powered Bias Prediction</p>
     <p style="font-size:12px; opacity:0.7;">Gold · GBP/USD · S&P 500 · US30/Dow Jones</p>
+    <p style="font-size:13px; opacity:0.9;">📅 {_day_name}, {_date_str}</p>
 </div>
 """, unsafe_allow_html=True)
+
+if _is_weekend:
+    st.warning("⚠️ **Markets are closed today (Weekend).** Signals shown reflect Friday's closing data — use this as your **Monday outlook**. No trades on weekends!")
 
 # ─── Sidebar ─────────────────────────────────────────────────────────────────
 with st.sidebar:
