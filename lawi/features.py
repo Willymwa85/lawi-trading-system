@@ -388,7 +388,185 @@ def generate_bias_label(df: pd.DataFrame, forward_bars: int = 5,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 10. Full Pipeline
+# 10. PDH/PDL, Weekly H/L, Session Ranges (ICT Liquidity Pools)
+
+def add_pdh_pdl(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Previous Day High (PDH) and Previous Day Low (PDL).
+    ICT: PDH/PDL are prime liquidity pools.
+    - Price sweeping PDH then reversing = bearish setup
+    - Price sweeping PDL then reversing = bullish setup
+    Works on daily bars (each row = 1 day).
+    """
+    df = df.copy()
+    df["pdh"] = df["High"].shift(1)
+    df["pdl"] = df["Low"].shift(1)
+
+    # Is current close above/below previous day levels?
+    df["above_pdh"] = (df["Close"] > df["pdh"]).astype(int)
+    df["below_pdl"] = (df["Close"] < df["pdl"]).astype(int)
+
+    # Wick swept PDH but closed below (liquidity grab = bearish reversal signal)
+    df["pdh_swept"] = ((df["High"] > df["pdh"]) & (df["Close"] < df["pdh"])).astype(int)
+
+    # Wick swept PDL but closed above (liquidity grab = bullish reversal signal)
+    df["pdl_swept"] = ((df["Low"] < df["pdl"]) & (df["Close"] > df["pdl"])).astype(int)
+
+    # Proximity to PDH/PDL as % (how close is price to the liquidity?)
+    price_range = (df["pdh"] - df["pdl"]).replace(0, float("nan"))
+    df["pdh_proximity"] = ((df["pdh"] - df["Close"]) / price_range * 100).fillna(0)
+    df["pdl_proximity"] = ((df["Close"] - df["pdl"]) / price_range * 100).fillna(0)
+
+    return df
+
+
+def add_weekly_levels(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Weekly High and Weekly Low (Mon-Fri profile).
+    ICT: Weekly highs/lows are the biggest liquidity pools on the chart.
+    - Sweep of weekly high on Mon/Tue = look for weekly low by Fri
+    - Sweep of weekly low on Mon/Tue = look for weekly high by Fri
+    Also detects relatively equal highs/lows (liquidity clusters).
+    Works on daily bars.
+    """
+    df = df.copy()
+    df.index = pd.to_datetime(df.index, utc=True)
+
+    # Previous week high/low using 5-day rolling (Mon-Fri)
+    df["weekly_high"] = df["High"].rolling(5).max().shift(1)
+    df["weekly_low"]  = df["Low"].rolling(5).min().shift(1)
+
+    # Sweep flags
+    df["weekly_high_swept"] = (
+        (df["High"] > df["weekly_high"]) & (df["Close"] < df["weekly_high"])
+    ).astype(int)
+
+    df["weekly_low_swept"] = (
+        (df["Low"] < df["weekly_low"]) & (df["Close"] > df["weekly_low"])
+    ).astype(int)
+
+    df["above_weekly_high"] = (df["Close"] > df["weekly_high"]).astype(int)
+    df["below_weekly_low"]  = (df["Close"] < df["weekly_low"]).astype(int)
+
+    # Relatively equal highs: last 5 bars with highs within 0.15% of each other
+    high_range = df["High"].rolling(5).apply(lambda x: (x.max() - x.min()) / x.mean() * 100, raw=True)
+    low_range  = df["Low"].rolling(5).apply(lambda x: (x.max() - x.min()) / x.mean() * 100, raw=True)
+    df["rel_equal_highs"] = (high_range < 0.15).astype(int)
+    df["rel_equal_lows"]  = (low_range  < 0.15).astype(int)
+
+    return df
+
+
+def add_session_ranges(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    ICT Session High/Low ranges on daily bars.
+    Since daily bars aggregate the full day, we approximate session ranges
+    using the Open/Close/High/Low with time-of-day weighting.
+
+    For true session H/L, use hourly data (see add_session_ranges_hourly).
+    On daily bars we flag:
+      - asian_range_pct: size of Asian range relative to full day range
+      - london_breakout: London typically breaks Asian range
+      - ny_reversal: NY session often reverses London move (Power of 3)
+    """
+    df = df.copy()
+
+    # Day range
+    day_range = (df["High"] - df["Low"]).replace(0, float("nan"))
+
+    # Open-to-close direction (daily bias)
+    df["daily_bullish"] = (df["Close"] > df["Open"]).astype(int)
+    df["daily_bearish"] = (df["Close"] < df["Open"]).astype(int)
+
+    # Upper/lower range as % (where did price close in the daily range?)
+    df["close_in_range"] = ((df["Close"] - df["Low"]) / day_range).fillna(0.5)
+
+    # Gap from open (manipulation signature)
+    df["open_gap_pct"] = ((df["Open"] - df["Close"].shift(1)) / df["Close"].shift(1) * 100).fillna(0)
+
+    return df
+
+
+def add_session_ranges_hourly(df_hourly: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute true ICT session High/Low from hourly data.
+    Sessions in UTC:
+      Asian:  00:00 - 05:00 UTC  (7PM - Midnight EST)
+      London: 07:00 - 10:00 UTC  (2AM - 5AM EST)
+      NY AM:  12:00 - 16:00 UTC  (7AM - 11AM EST)
+
+    Returns a daily DataFrame with session H/L columns for merging.
+    """
+    df = df_hourly.copy()
+    df.index = pd.to_datetime(df.index, utc=True)
+    hour = df.index.hour
+    date = df.index.normalize()
+
+    df["date"]    = date
+    df["hour"]    = hour
+
+    # Asian session (00-05 UTC)
+    asian = df[df["hour"].between(0, 4)]
+    asian_hl = asian.groupby("date").agg(
+        asian_high=("High", "max"),
+        asian_low=("Low", "min")
+    )
+
+    # London session (07-10 UTC)
+    london = df[df["hour"].between(7, 9)]
+    london_hl = london.groupby("date").agg(
+        london_high=("High", "max"),
+        london_low=("Low", "min")
+    )
+
+    # NY AM session (12-16 UTC)
+    ny = df[df["hour"].between(12, 15)]
+    ny_hl = ny.groupby("date").agg(
+        ny_high=("High", "max"),
+        ny_low=("Low", "min")
+    )
+
+    session_df = asian_hl.join(london_hl, how="outer").join(ny_hl, how="outer")
+    session_df.index = pd.to_datetime(session_df.index, utc=True)
+    return session_df
+
+
+def add_session_sweep_flags(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Add session sweep flags to daily dataframe.
+    Requires asian_high, asian_low, london_high, london_low columns already merged.
+    """
+    df = df.copy()
+
+    for col in ["asian_high", "asian_low", "london_high", "london_low"]:
+        if col not in df.columns:
+            df[col] = float("nan")
+
+    # Asian high/low swept
+    df["asian_high_swept"] = (
+        (df["High"] > df["asian_high"]) & (df["Close"] < df["asian_high"])
+    ).astype(int)
+    df["asian_low_swept"] = (
+        (df["Low"] < df["asian_low"]) & (df["Close"] > df["asian_low"])
+    ).astype(int)
+
+    # London high/low swept
+    df["london_high_swept"] = (
+        (df["High"] > df["london_high"]) & (df["Close"] < df["london_high"])
+    ).astype(int)
+    df["london_low_swept"] = (
+        (df["Low"] < df["london_low"]) & (df["Close"] > df["london_low"])
+    ).astype(int)
+
+    # Price position relative to Asian range (above/below/inside)
+    df["above_asian_high"] = (df["Close"] > df["asian_high"]).astype(int)
+    df["below_asian_low"]  = (df["Close"] < df["asian_low"]).astype(int)
+
+    return df.fillna(0)
+
+
+# 11. Full Pipeline
+
 # ─────────────────────────────────────────────────────────────────────────────
 
 FEATURE_COLUMNS = [
@@ -417,6 +595,12 @@ FEATURE_COLUMNS = [
     "is_bullish_candle", "is_bearish_candle",
     "day_of_week",
     "dxy_change", "dxy_bullish", "dxy_bearish", "dxy_above_20ma",
+    "above_pdh", "below_pdl", "pdh_swept", "pdl_swept", "pdh_proximity", "pdl_proximity",
+    "weekly_high_swept", "weekly_low_swept", "above_weekly_high", "below_weekly_low",
+    "rel_equal_highs", "rel_equal_lows",
+    "daily_bullish", "daily_bearish", "close_in_range",
+    "asian_high_swept", "asian_low_swept", "london_high_swept", "london_low_swept",
+    "above_asian_high", "below_asian_low",
 ]
 
 
@@ -463,6 +647,10 @@ def build_features(df: pd.DataFrame, label: bool = True, dxy_df: pd.DataFrame = 
     df = add_premium_discount(df)
     df = add_power_of_three(df)
     df = add_indicators(df)
+    df = add_pdh_pdl(df)
+    df = add_weekly_levels(df)
+    df = add_session_ranges(df)
+    df = add_session_sweep_flags(df)
 
     # DXY Macro Feature
     if dxy_df is not None:
