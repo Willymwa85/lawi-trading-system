@@ -416,10 +416,34 @@ FEATURE_COLUMNS = [
     "body_size", "upper_wick", "lower_wick",
     "is_bullish_candle", "is_bearish_candle",
     "day_of_week",
+    "dxy_change", "dxy_bullish", "dxy_bearish", "dxy_above_20ma",
 ]
 
 
-def build_features(df: pd.DataFrame, label: bool = True) -> pd.DataFrame:
+def add_dxy_features(df, dxy_df):
+    dxy_cols = ["dxy_close", "dxy_change", "dxy_bullish", "dxy_bearish", "dxy_above_20ma"]
+    if dxy_df is None or dxy_df.empty:
+        for c in dxy_cols:
+            df[c] = 0.0
+        return df
+    dxy = dxy_df[["Close"]].copy()
+    dxy.columns = ["dxy_close"]
+    dxy.index = pd.to_datetime(dxy.index, utc=True)
+    dxy["dxy_change"] = dxy["dxy_close"].pct_change() * 100
+    dxy["dxy_20ma"] = dxy["dxy_close"].rolling(20).mean()
+    dxy["dxy_above_20ma"] = (dxy["dxy_close"] > dxy["dxy_20ma"]).astype(int)
+    dxy["dxy_bullish"] = (dxy["dxy_change"] > 0.1).astype(int)
+    dxy["dxy_bearish"] = (dxy["dxy_change"] < -0.1).astype(int)
+    df_idx = pd.to_datetime(df.index, utc=True).normalize()
+    dxy.index = dxy.index.normalize()
+    aligned = dxy[dxy_cols].reindex(df_idx, method="ffill")
+    aligned.index = df.index
+    for c in dxy_cols:
+        df[c] = aligned[c].fillna(0).values
+    return df
+
+
+def build_features(df: pd.DataFrame, label: bool = True, dxy_df: pd.DataFrame = None) -> pd.DataFrame:
     """
     Run the full ICT feature-engineering pipeline on a raw OHLCV DataFrame.
 
@@ -439,6 +463,17 @@ def build_features(df: pd.DataFrame, label: bool = True) -> pd.DataFrame:
     df = add_premium_discount(df)
     df = add_power_of_three(df)
     df = add_indicators(df)
+
+    # DXY Macro Feature
+    if dxy_df is not None:
+        df = add_dxy_features(df, dxy_df)
+    else:
+        try:
+            from .data_fetcher import fetch_dxy
+            _dxy = fetch_dxy(days=len(df) + 60)
+            df = add_dxy_features(df, _dxy)
+        except Exception:
+            pass
 
     if label:
         df = generate_bias_label(df)

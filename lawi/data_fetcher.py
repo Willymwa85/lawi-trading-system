@@ -115,6 +115,11 @@ def fetch_all_hourly() -> dict[str, pd.DataFrame]:
     return result
 
 
+def fetch_dxy(days: int = 2500) -> pd.DataFrame:
+    """Fetch US Dollar Index (DXY) daily data. Ticker: DX-Y.NYB"""
+    return fetch_ohlcv("DX-Y.NYB", days=days, interval="1d")
+
+
 def get_current_price(symbol: str) -> float | None:
     """Get the latest closing price for a symbol."""
     ticker = SYMBOLS.get(symbol)
