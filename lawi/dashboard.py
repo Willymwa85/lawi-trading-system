@@ -205,17 +205,23 @@ with tab1:
 
     if "error" in pred:
         st.warning(f"⚠️ {pred['error']}")
-        if st.button("🚀 Train Model Now"):
-            with st.spinner(f"Training {selected_symbol} model (this takes a minute) …"):
+
+    # Admin: always show Train button
+    if is_admin():
+        from lawi.config import TRAIN_DAYS
+        if st.button(f"🚀 Train Model Now ({TRAIN_DAYS} days)", key="train_btn"):
+            with st.spinner(f"Training {selected_symbol} — fetching {TRAIN_DAYS} days of data … (2–5 min)"):
                 from lawi.model import train
-                result = train(selected_symbol, SYMBOLS[selected_symbol])
+                result = train(selected_symbol, SYMBOLS[selected_symbol], days=TRAIN_DAYS)
                 if "error" not in result:
-                    st.success(f"✅ Trained! Accuracy: {result['accuracy']*100:.1f}%")
+                    st.success(f"✅ Training complete! Accuracy: {result['accuracy']*100:.1f}%  |  CV: {result['cv_accuracy']*100:.1f}%  |  Samples: {result['n_samples']}")
                     st.cache_data.clear()
                     st.rerun()
                 else:
                     st.error(result["error"])
-    else:
+        st.markdown("---")
+
+    if "error" not in pred:
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Bias",        pred.get("label","?"))
         c2.metric("Confidence",  pred.get("confidence_pct","?"))
