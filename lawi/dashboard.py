@@ -358,110 +358,98 @@ if tab4 is not None:
                 </div>
                 """, unsafe_allow_html=True)
 
-            st.markdown("---")
+        st.markdown("---")
 
-    # ── Confusion Matrix ────────────────────────────────────────────────────────
-    st.markdown("#### 🔢 Confusion Matrix — Model Self-Evaluation")
-    st.caption("Shows how often the model predicts each class correctly on training data.")
+        # ── Confusion Matrix ─────────────────────────────────────────────────
+        st.markdown("#### 🔢 Confusion Matrix — Model Self-Evaluation")
+        st.caption("Shows how often the model predicts each class correctly on training data.")
 
-    cm_sym = st.selectbox("Select asset for analysis", list(SYMBOLS.keys()),
-                           key="cm_sym", format_func=lambda s: SYMBOL_NAMES.get(s, s))
+        cm_sym = st.selectbox("Select asset for analysis", list(SYMBOLS.keys()),
+                               key="cm_sym", format_func=lambda s: SYMBOL_NAMES.get(s, s))
+        model_obj = load_model(cm_sym)
+        if model_obj is None:
+            st.warning(f"No trained model found for {cm_sym}. Train it first.")
+        else:
+            from lawi.data_fetcher import fetch_daily
+            from lawi.features import build_features, FEATURE_COLUMNS
+            from lawi.config import TRAIN_DAYS
+            from sklearn.metrics import confusion_matrix as sk_cm
+            with st.spinner("Loading data for analysis…"):
+                raw_cm = fetch_daily(SYMBOLS[cm_sym], days=TRAIN_DAYS)
+                df_cm  = build_features(raw_cm, label=True)
+                feat_cols = [c for c in FEATURE_COLUMNS if c in df_cm.columns]
+                X_cm = df_cm[feat_cols].values
+                y_cm = df_cm["bias_label"].values.astype(int)
+                y_pred_cm = model_obj.predict(X_cm)
+            labels = ["BEARISH", "BULLISH", "CONSOLIDATION"]
+            cm = sk_cm(y_cm, y_pred_cm)
+            cm_pct = cm.astype(float) / cm.sum(axis=1, keepdims=True) * 100
+            fig_cm = go.Figure(go.Heatmap(
+                z=cm_pct,
+                x=[f"Pred {l}" for l in labels],
+                y=[f"True {l}" for l in labels],
+                colorscale="RdYlGn", zmin=0, zmax=100,
+                text=[[f"{cm[i][j]}<br>({cm_pct[i][j]:.1f}%)" for j in range(3)] for i in range(3)],
+                texttemplate="%{text}", textfont={"size": 13}, showscale=True,
+            ))
+            fig_cm.update_layout(
+                title=f"Confusion Matrix — {SYMBOL_NAMES.get(cm_sym, cm_sym)}",
+                plot_bgcolor="#1e1e2e", paper_bgcolor="#1e1e2e",
+                font_color="white", height=380,
+                xaxis_title="Predicted", yaxis_title="Actual",
+            )
+            st.plotly_chart(fig_cm, use_container_width=True)
+            k1, k2, k3 = st.columns(3)
+            for col, i, label in zip([k1, k2, k3], [0, 1, 2], labels):
+                correct = cm[i][i]
+                total   = cm[i].sum()
+                pct     = (correct / total * 100) if total > 0 else 0
+                emoji   = "🟢" if pct >= 60 else "🟡" if pct >= 45 else "🔴"
+                col.metric(f"{emoji} {label}", f"{pct:.1f}%", f"{correct}/{total} correct")
 
-    model_obj = load_model(cm_sym)
-    if model_obj is None:
-        st.warning(f"No trained model found for {cm_sym}. Train it first.")
-    else:
-        from lawi.data_fetcher import fetch_daily
-        from lawi.features import build_features, FEATURE_COLUMNS
-        from lawi.config import TRAIN_DAYS
-        from sklearn.metrics import confusion_matrix as sk_cm
-        import numpy as np
+        st.markdown("---")
 
-        with st.spinner("Loading data for analysis…"):
-            raw_cm = fetch_daily(SYMBOLS[cm_sym], days=TRAIN_DAYS)
-            df_cm  = build_features(raw_cm, label=True)
-            feat_cols = [c for c in FEATURE_COLUMNS if c in df_cm.columns]
-            X_cm = df_cm[feat_cols].values
-            y_cm = df_cm["bias_label"].values.astype(int)
-            y_pred_cm = model_obj.predict(X_cm)
+        # ── Feature Importance ────────────────────────────────────────────────
+        st.markdown("#### 🏆 Feature Importance — Which ICT Signals Matter Most?")
+        st.caption("Higher score = more influence on the model's prediction.")
 
-        labels = ["BEARISH", "BULLISH", "CONSOLIDATION"]
-        cm = sk_cm(y_cm, y_pred_cm)
-        cm_pct = cm.astype(float) / cm.sum(axis=1, keepdims=True) * 100
+        fi_sym = st.selectbox("Select asset for feature importance", list(SYMBOLS.keys()),
+                               key="fi_sym", format_func=lambda s: SYMBOL_NAMES.get(s, s))
+        model_fi = load_model(fi_sym)
+        if model_fi is None:
+            st.warning(f"No trained model found for {fi_sym}. Train it first.")
+        else:
+            try:
+                importances = model_fi.feature_importances_
+                from lawi.data_fetcher import fetch_daily
+                from lawi.features import build_features, FEATURE_COLUMNS
+                raw_fi = fetch_daily(SYMBOLS[fi_sym], days=60)
+                df_fi  = build_features(raw_fi, label=False)
+                fi_cols = [c for c in FEATURE_COLUMNS if c in df_fi.columns]
+                if len(importances) == len(fi_cols):
+                    fi_df = pd.DataFrame({"Feature": fi_cols, "Importance": importances})
+                    fi_df = fi_df.sort_values("Importance", ascending=True).tail(20)
+                    fig_fi = go.Figure(go.Bar(
+                        x=fi_df["Importance"], y=fi_df["Feature"], orientation="h",
+                        marker_color="#00ff88",
+                        text=[f"{v:.4f}" for v in fi_df["Importance"]],
+                        textposition="outside",
+                    ))
+                    fig_fi.update_layout(
+                        title=f"Top 20 Features — {SYMBOL_NAMES.get(fi_sym, fi_sym)}",
+                        plot_bgcolor="#1e1e2e", paper_bgcolor="#1e1e2e",
+                        font_color="white", height=550,
+                        xaxis_title="Importance Score", yaxis_title="",
+                        margin=dict(l=160),
+                    )
+                    st.plotly_chart(fig_fi, use_container_width=True)
+                else:
+                    st.warning("Feature count mismatch — retrain the model to refresh.")
+            except Exception as e:
+                st.error(f"Could not load feature importance: {e}")
 
-        fig_cm = go.Figure(go.Heatmap(
-            z=cm_pct,
-            x=[f"Pred {l}" for l in labels],
-            y=[f"True {l}" for l in labels],
-            colorscale="RdYlGn",
-            zmin=0, zmax=100,
-            text=[[f"{cm[i][j]}<br>({cm_pct[i][j]:.1f}%)" for j in range(3)] for i in range(3)],
-            texttemplate="%{text}",
-            textfont={"size": 13},
-            showscale=True,
-        ))
-        fig_cm.update_layout(
-            title=f"Confusion Matrix — {SYMBOL_NAMES.get(cm_sym, cm_sym)}",
-            plot_bgcolor="#1e1e2e", paper_bgcolor="#1e1e2e",
-            font_color="white", height=380,
-            xaxis_title="Predicted", yaxis_title="Actual",
-        )
-        st.plotly_chart(fig_cm, use_container_width=True)
-
-        k1, k2, k3 = st.columns(3)
-        for col, i, label in zip([k1, k2, k3], [0, 1, 2], labels):
-            correct = cm[i][i]
-            total   = cm[i].sum()
-            pct     = (correct / total * 100) if total > 0 else 0
-            emoji   = "🟢" if pct >= 60 else "🟡" if pct >= 45 else "🔴"
-            col.metric(f"{emoji} {label}", f"{pct:.1f}%", f"{correct}/{total} correct")
-
-    st.markdown("---")
-
-    # ── Feature Importance ──────────────────────────────────────────────────────
-    st.markdown("#### 🏆 Feature Importance — Which ICT Signals Matter Most?")
-    st.caption("Higher score = more influence on the model's prediction.")
-
-    fi_sym = st.selectbox("Select asset for feature importance", list(SYMBOLS.keys()),
-                           key="fi_sym", format_func=lambda s: SYMBOL_NAMES.get(s, s))
-    model_fi = load_model(fi_sym)
-    if model_fi is None:
-        st.warning(f"No trained model found for {fi_sym}. Train it first.")
-    else:
-        from lawi.features import FEATURE_COLUMNS
-        try:
-            importances = model_fi.feature_importances_
-            raw_fi = fetch_daily(SYMBOLS[fi_sym], days=60)
-            df_fi  = build_features(raw_fi, label=False)
-            fi_cols = [c for c in FEATURE_COLUMNS if c in df_fi.columns]
-
-            if len(importances) == len(fi_cols):
-                fi_df = pd.DataFrame({"Feature": fi_cols, "Importance": importances})
-                fi_df = fi_df.sort_values("Importance", ascending=True).tail(20)
-
-                fig_fi = go.Figure(go.Bar(
-                    x=fi_df["Importance"],
-                    y=fi_df["Feature"],
-                    orientation="h",
-                    marker_color="#00ff88",
-                    text=[f"{v:.4f}" for v in fi_df["Importance"]],
-                    textposition="outside",
-                ))
-                fig_fi.update_layout(
-                    title=f"Top 20 Features — {SYMBOL_NAMES.get(fi_sym, fi_sym)}",
-                    plot_bgcolor="#1e1e2e", paper_bgcolor="#1e1e2e",
-                    font_color="white", height=550,
-                    xaxis_title="Importance Score", yaxis_title="",
-                    margin=dict(l=160),
-                )
-                st.plotly_chart(fig_fi, use_container_width=True)
-            else:
-                st.warning("Feature count mismatch — retrain the model to refresh feature importance.")
-        except Exception as e:
-            st.error(f"Could not load feature importance: {e}")
-
-    st.markdown("---")
-    st.markdown("#### 📝 Log Trade Outcome")
+        st.markdown("---")
+        st.markdown("#### 📝 Log Trade Outcome")
         log_sym  = st.selectbox("Asset", list(SYMBOLS.keys()), key="log_sym",
                                  format_func=lambda s: SYMBOL_NAMES.get(s, s))
         log_pred = st.selectbox("Your prediction was", ["BULLISH","BEARISH","CONSOLIDATION"])
