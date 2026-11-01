@@ -31,7 +31,7 @@ SYMBOL_NAMES = {
 
 # ─── Data Settings ───────────────────────────────────────────────────────────
 LOOKBACK_DAYS   = 60    # days of history to fetch for feature engineering
-TRAIN_DAYS      = 365   # days of history to train the model on
+TRAIN_DAYS      = 9000  # ~26 years from 2000 for richer training
 
 # Timeframes to fetch (pandas/yfinance interval strings)
 INTERVAL_1H  = "1h"
