@@ -24,7 +24,7 @@ jobs:
       - run: |
           git config user.email "actions@github.com"
           git config user.name "GitHub Actions"
-          git add -f lawi/models/*.pkl
+          git add -f models/*.pkl
           git diff --cached --quiet || git commit -m "Update trained models"
           git push origin HEAD:master
       - run: python predict_now.py --telegram
