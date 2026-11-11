@@ -148,7 +148,10 @@ def load_all_predictions():
         if model is None:
             results[symbol] = {"error": f"Model not trained yet for {symbol}"}
             continue
-        results[symbol] = predict_bias(symbol, ticker)
+        try:
+            results[symbol] = predict_bias(symbol, ticker)
+        except Exception as e:
+            results[symbol] = {"error": f"Model outdated — retrain needed. ({type(e).__name__})"}
     return results
 
 
