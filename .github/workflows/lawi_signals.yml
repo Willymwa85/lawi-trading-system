@@ -21,6 +21,12 @@ jobs:
       - run: |
           rm -f lawi/models/*.pkl
           python train.py
+      - run: |
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+          git add -f lawi/models/*.pkl
+          git diff --cached --quiet || git commit -m "Update trained models"
+          git push origin HEAD:master
       - run: python predict_now.py --telegram
     env:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
