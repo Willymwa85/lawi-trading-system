@@ -19,7 +19,7 @@ jobs:
           python-version: '3.11'
       - run: pip install -r requirements.txt
       - run: |
-          rm -f lawi/models/*.pkl
+          rm -f lawi/models/*.pkl models/*.pkl
           python train.py
       - run: |
           git config user.email "actions@github.com"
